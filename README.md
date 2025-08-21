@@ -61,46 +61,46 @@ Both scripts are optimized specifically for Debian 13 with open-iscsi (the base 
 
 1. Clone the repository:
 
-```bash
-apt update
-apt install -y git
-git clone https://github.com/DerekSeaman/iSCSI_mounting.git
-cd iSCSI_mounting
-```
+   ```bash
+   apt update
+   apt install -y git
+   git clone https://github.com/DerekSeaman/iSCSI_mounting.git
+   cd iSCSI_mounting
+   ```
 
 2. Make scripts executable:
 
-```bash
-chmod +x iSCSI_mount.sh iSCSI_cleanup.sh
-```
+   ```bash
+   chmod +x iSCSI_mount.sh iSCSI_cleanup.sh
+   ```
 
 3. Install and configure open-iscsi:
 
-```bash
-# Install open-iscsi and update package list
-apt install open-iscsi -y
+   ```bash
+   # Install open-iscsi and update package list
+   apt install open-iscsi -y
 
-# Load iSCSI kernel modules
-modprobe iscsi_tcp
-modprobe scsi_transport_iscsi
+   # Load iSCSI kernel modules
+   modprobe iscsi_tcp
+   modprobe scsi_transport_iscsi
 
-# Verify modules are loaded
-lsmod | grep iscsi_tcp
-modinfo iscsi_tcp
+   # Verify modules are loaded
+   lsmod | grep iscsi_tcp
+   modinfo iscsi_tcp
 
-# Configure modules to load at boot
-echo "iscsi_tcp" >> /etc/modules
-echo "scsi_transport_iscsi" >> /etc/modules
+   # Configure modules to load at boot
+   echo "iscsi_tcp" >> /etc/modules
+   echo "scsi_transport_iscsi" >> /etc/modules
 
-# Configure automatic node startup
-sed -i 's/node.startup = manual/node.startup = automatic/g' /etc/iscsi/iscsid.conf
-```
+   # Configure automatic node startup
+   sed -i 's/node.startup = manual/node.startup = automatic/g' /etc/iscsi/iscsid.conf
+   ```
 
 4. Reboot the system:
 
-```bash
-reboot
-```
+   ```bash
+   reboot
+   ```
 
 ## Usage
 
