@@ -26,6 +26,7 @@ Both scripts are optimized specifically for Debian 13 with open-iscsi (the base 
 - **CHAP Authentication Support** - Secure connection with username/password authentication
 - **Automatic Device Detection** - Identifies the newly connected iSCSI device without manual specification
 - **Complete Storage Setup** - Partitions, formats (ext4), and mounts the storage automatically
+- **Existing Storage Protection** - Detects existing partition tables and filesystems, prompts user before destruction, can reuse existing storage
 - **fstab Integration** - Uses traditional fstab approach with systemd-optimized options for reliable boot mounting
 - **Session and Mount Monitoring** - Configures automatic reconnection and mount restoration monitoring via cron (every minute)
 - **UUID-based Mounting** - Uses partition UUIDs for reliable mounting across reboots
@@ -131,7 +132,24 @@ Enter portal IP address: 192.168.2.100
 Enter mount path: /mnt/synology
 
 ✓ iSCSI connection established
-✓ Device /dev/sde detected and configured  
+✓ Device /dev/sde detected and configured
+
+Step 1: Partitioning disk
+Warning: Device /dev/sde already has partitions:
+NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+sde      8:64   0  300G  0 disk 
+└─sde1   8:65   0  300G  0 part 
+Continue and create new partition table? This will destroy existing data! (y/N): n
+Skipping partitioning - using existing partition table
+✓ Using existing partition: /dev/sde1
+
+Step 2: Formatting partition with ext4
+Warning: Partition /dev/sde1 already has a filesystem (ext4):
+/dev/sde1: UUID="12345678-1234-1234-1234-123456789abc" TYPE="ext4"
+Continue and format partition? This will destroy existing filesystem! (y/N): n
+Skipping formatting - using existing filesystem
+✓ Using existing filesystem on /dev/sde1
+
 ✓ Mount configured for immediate availability on boot
 ✓ Monitoring setup complete
 
@@ -159,7 +177,12 @@ To remove all iSCSI configurations and disconnect storage:
 1. **Service Verification** - Checks and starts iscsid service
 2. **iSCSI Connection** - Connects to target with CHAP authentication and configures automatic startup
 3. **Device Detection** - Automatically finds the new storage device
-4. **Storage Preparation** - Partitions and formats the device with ext4
+4. **Storage Preparation** - Intelligently handles partitioning and formatting:
+   - Detects existing partition tables and prompts user before destruction
+   - Can reuse existing partitions if user declines to overwrite
+   - Detects existing filesystems and prompts user before formatting
+   - Can reuse existing ext2/ext3/ext4 filesystems if user declines to format
+   - Creates new partition and ext4 filesystem only when needed or requested
 5. **fstab Configuration** - Adds UUID-based entry to /etc/fstab with systemd-optimized options
 6. **Mount Activation** - Immediately mounts the filesystem and verifies operation
 7. **Monitoring Setup** - Configures automatic session reconnection and mount restoration monitoring via cron

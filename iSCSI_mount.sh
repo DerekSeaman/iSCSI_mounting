@@ -209,40 +209,82 @@ SERVICE_NAME=$(basename "$MOUNT_PATH")
 echo -e "\n${YELLOW}Step 1: Partitioning disk${NC}"
 # Check if device already has partitions
 EXISTING_PARTITIONS=$(lsblk -n -o NAME "$DEVICE_PATH" | tail -n +2 || true)
+SKIP_PARTITIONING=false
 
 if [[ -n "$EXISTING_PARTITIONS" ]]; then
     echo -e "${YELLOW}Warning: Device $DEVICE_PATH already has partitions:${NC}"
     lsblk "$DEVICE_PATH"
     read -rp "Continue and create new partition table? This will destroy existing data! (y/N): " CONFIRM
     if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-        echo "Aborted by user."
-        exit 0
+        echo -e "${BLUE}Skipping partitioning - using existing partition table${NC}"
+        SKIP_PARTITIONING=true
+        # Use the first existing partition - extract just the device name without tree characters
+        PARTITION=$(lsblk -n -o NAME "$DEVICE_PATH" | tail -n +2 | head -1 | sed 's/[^a-zA-Z0-9]//g')
+        PARTITION="/dev/$PARTITION"
     fi
 fi
 
-# Create partition using fdisk
-(
-echo o # Create new DOS partition table
-echo n # Create new partition
-echo p # Primary partition
-echo 1 # Partition number
-echo   # Default first sector
-echo   # Default last sector (use whole disk)
-echo w # Write changes and exit
-) | fdisk "$DEVICE_PATH"
+if [[ "$SKIP_PARTITIONING" == false ]]; then
+    # Create partition using fdisk
+    (
+    echo o # Create new DOS partition table
+    echo n # Create new partition
+    echo p # Primary partition
+    echo 1 # Partition number
+    echo   # Default first sector
+    echo   # Default last sector (use whole disk)
+    echo w # Write changes and exit
+    ) | fdisk "$DEVICE_PATH"
 
-# Wait for partition to appear
-sleep 3
-PARTITION="${DEVICE_PATH}1"
+    # Wait for partition to appear
+    sleep 3
+    PARTITION="${DEVICE_PATH}1"
 
-# Verify partition was created
-if [[ ! -b "$PARTITION" ]]; then
-    echo -e "${RED}Error: Partition $PARTITION was not created successfully.${NC}" >&2
-    exit 1
+    # Verify partition was created
+    if [[ ! -b "$PARTITION" ]]; then
+        echo -e "${RED}Error: Partition $PARTITION was not created successfully.${NC}" >&2
+        exit 1
+    fi
+    echo -e "${GREEN}✓ New partition created: $PARTITION${NC}"
+else
+    echo -e "${GREEN}✓ Using existing partition: $PARTITION${NC}"
+    # Verify the existing partition exists
+    if [[ ! -b "$PARTITION" ]]; then
+        echo -e "${RED}Error: Existing partition $PARTITION does not exist.${NC}" >&2
+        exit 1
+    fi
 fi
 
 echo -e "\n${YELLOW}Step 2: Formatting partition with ext4${NC}"
-mkfs.ext4 "$PARTITION"
+# Check if partition already has a filesystem
+EXISTING_FILESYSTEM=$(blkid -s TYPE -o value "$PARTITION" 2>/dev/null || true)
+SKIP_FORMATTING=false
+
+if [[ -n "$EXISTING_FILESYSTEM" ]]; then
+    echo -e "${YELLOW}Warning: Partition $PARTITION already has a filesystem ($EXISTING_FILESYSTEM):${NC}"
+    blkid "$PARTITION" 2>/dev/null || true
+    read -rp "Continue and format partition? This will destroy existing filesystem! (y/N): " CONFIRM
+    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+        echo -e "${BLUE}Skipping formatting - using existing filesystem${NC}"
+        SKIP_FORMATTING=true
+    fi
+fi
+
+if [[ "$SKIP_FORMATTING" == false ]]; then
+    mkfs.ext4 "$PARTITION"
+    echo -e "${GREEN}✓ Partition formatted with ext4${NC}"
+else
+    echo -e "${GREEN}✓ Using existing filesystem on $PARTITION${NC}"
+    # Verify the existing filesystem is ext4 or compatible
+    if [[ "$EXISTING_FILESYSTEM" != "ext4" && "$EXISTING_FILESYSTEM" != "ext3" && "$EXISTING_FILESYSTEM" != "ext2" ]]; then
+        echo -e "${YELLOW}Warning: Existing filesystem is $EXISTING_FILESYSTEM, not ext4. This may cause issues.${NC}"
+        read -rp "Continue anyway? (y/N): " CONFIRM
+        if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+            echo "Aborted by user."
+            exit 0
+        fi
+    fi
+fi
 
 echo -e "\n${YELLOW}Step 3: Creating mount directory${NC}"
 mkdir -p "$MOUNT_PATH"
@@ -369,7 +411,7 @@ if ! iscsiadm -m session 2>/dev/null | grep -q "\$TARGET"; then
     fi
 else
     # Session exists, verify it's healthy by checking for running state
-    session_health=$(iscsiadm -m session -P 3 2>/dev/null | awk -v target="\$TARGET" '
+    session_health=\$(iscsiadm -m session -P 3 2>/dev/null | awk -v target="\$TARGET" '
         /Target:/ { current_target = \$2 }
         current_target == target && /State:/ { 
             if (\$2 == "running") print "healthy"
