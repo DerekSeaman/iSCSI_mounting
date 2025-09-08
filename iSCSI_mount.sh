@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Version 1.3, 8/20/2025
+# Version 1.4, Sept 8, 2025
 # iSCSI LUN mounting script for Proxmox Backup Server (PBS)
 # PBS must be running as a VM or bare metal. LXCs are NOT supported.
 # Derek Seaman
@@ -132,11 +132,74 @@ if ! iscsiadm -m node --targetname="$TARGET_IQN" --portal="$PORTAL_IP" --show >/
     exit 1
 fi
 
-# Login to the target via the specified portal
-echo -e "${YELLOW}Logging into iSCSI target...${NC}"
-iscsiadm -m node --targetname="$TARGET_IQN" --portal="$PORTAL_IP" --login
+# Check if session already exists before attempting login
+echo -e "${YELLOW}Checking for existing iSCSI sessions...${NC}"
+EXISTING_SESSION=$(iscsiadm -m session 2>/dev/null | grep "$TARGET_IQN" || true)
 
-echo -e "${GREEN}✓ iSCSI login attempted${NC}"
+if [[ -n "$EXISTING_SESSION" ]]; then
+    echo -e "${BLUE}ℹ Session already exists for target $TARGET_IQN${NC}"
+    echo "$EXISTING_SESSION"
+    
+    # Check if this target is already mounted
+    echo -e "${YELLOW}Checking if target is already mounted...${NC}"
+    
+    # Get device for this target
+    TARGET_DEVICE=""
+    in_target_section=false
+    while IFS= read -r line; do
+        if [[ "$line" =~ Target:.*"$TARGET_IQN" ]]; then
+            in_target_section=true
+            continue
+        fi
+        if [[ "$line" =~ ^[[:space:]]*Target: ]] && [[ ! "$line" =~ "$TARGET_IQN" ]]; then
+            in_target_section=false
+            continue
+        fi
+        if [[ "$in_target_section" == true ]] && [[ "$line" =~ Attached\ scsi\ disk\ ([a-z]+).*State:\ running ]]; then
+            device_name="${BASH_REMATCH[1]}"
+            if [[ -n "$device_name" ]]; then
+                TARGET_DEVICE="/dev/$device_name"
+                break
+            fi
+        fi
+    done <<< "$(iscsiadm -m session -P 3 2>/dev/null)"
+    
+    # Check if any partition of this device is mounted
+    if [[ -n "$TARGET_DEVICE" ]]; then
+        MOUNT_INFO=$(mount | grep "^$TARGET_DEVICE" || true)
+        if [[ -n "$MOUNT_INFO" ]]; then
+            # Extract mount point from mount output
+            CURRENT_MOUNT=$(echo "$MOUNT_INFO" | awk '{print $3}' | head -1)
+            echo -e "${GREEN}✓ Target $TARGET_IQN is already connected and mounted${NC}"
+            echo -e "${BLUE}Device: $TARGET_DEVICE${NC}"
+            echo -e "${BLUE}Mount point: $CURRENT_MOUNT${NC}"
+            echo
+            echo -e "${ORANGE}The iSCSI LUN is already properly configured and mounted.${NC}"
+            echo -e "${ORANGE}No additional action required.${NC}"
+            exit 0
+        fi
+    fi
+    
+    echo -e "${BLUE}Target is connected but not mounted. Continuing with mount setup...${NC}"
+    LOGIN_EXIT_CODE=0  # Skip login since session exists
+else
+    # Login to the target via the specified portal
+    echo -e "${YELLOW}Logging into iSCSI target...${NC}"
+    # Add timeout to prevent hanging
+    timeout 30 iscsiadm -m node --targetname="$TARGET_IQN" --portal="$PORTAL_IP" --login
+    LOGIN_EXIT_CODE=$?
+fi
+
+# Handle login result
+if [[ $LOGIN_EXIT_CODE -eq 124 ]]; then
+    echo -e "${RED}Error: iSCSI login timed out after 30 seconds${NC}" >&2
+    exit 1
+elif [[ $LOGIN_EXIT_CODE -ne 0 ]]; then
+    echo -e "${RED}Error: Failed to login to iSCSI target (exit code: $LOGIN_EXIT_CODE)${NC}" >&2
+    exit 1
+elif [[ $LOGIN_EXIT_CODE -eq 0 ]] && [[ -z "$EXISTING_SESSION" ]]; then
+    echo -e "${GREEN}✓ iSCSI login successful${NC}"
+fi
 echo -e "${BLUE}Active sessions:${NC}"
 iscsiadm -m session || true
 
@@ -157,25 +220,84 @@ else
 fi
 
 # Extract the device path from the attached devices output
-echo -e "${YELLOW}Detecting new iSCSI device...${NC}"
+echo -e "${YELLOW}Detecting new iSCSI device for target $TARGET_IQN...${NC}"
 DEVICE_PATH=""
 
-# Look for the first device in "running" state
-while IFS= read -r line; do
-    if echo "$line" | grep -qi 'running'; then
-        # Extract device name from lines like "Attached scsi disk sdd    State: running"
-        if [[ "$line" =~ Attached\ scsi\ disk\ ([a-z]+) ]]; then
-            DEVICE_NAME="${BASH_REMATCH[1]}"
-            DEVICE_PATH="/dev/$DEVICE_NAME"
-            break
+# Get list of currently mounted iSCSI devices to avoid them
+MOUNTED_ISCSI_DEVICES=()
+while IFS= read -r mount_line; do
+    if [[ "$mount_line" =~ ^/dev/([a-z]+[0-9]*) ]]; then
+        device="${BASH_REMATCH[1]}"
+        # Remove partition number to get base device
+        base_device=$(echo "$device" | sed 's/[0-9]*$//')
+        # Check if it's an iSCSI device by looking at its path
+        if [[ -e "/sys/block/$base_device/device" ]]; then
+            device_path=$(readlink -f "/sys/block/$base_device/device" 2>/dev/null || true)
+            if echo "$device_path" | grep -q "session"; then
+                MOUNTED_ISCSI_DEVICES+=("/dev/$base_device")
+            fi
         fi
     fi
-done <<< "$FINAL_ATTACHED"
+done <<< "$(mount)"
+
+echo "Currently mounted iSCSI devices: ${MOUNTED_ISCSI_DEVICES[*]:-none}"
+
+# Get session-specific attached devices for our target
+# Use a simpler approach - find devices attached to sessions with our target
+TARGET_SESSION_INFO=""
+in_target_section=false
+
+while IFS= read -r line; do
+    # Check if this line contains our target IQN
+    if [[ "$line" =~ Target:.*"$TARGET_IQN" ]]; then
+        in_target_section=true
+        continue
+    fi
+    
+    # If we hit another Target: line that's not ours, we're out of our section
+    if [[ "$line" =~ ^[[:space:]]*Target: ]] && [[ ! "$line" =~ "$TARGET_IQN" ]]; then
+        in_target_section=false
+        continue
+    fi
+    
+    # If we're in our target's section and find an attached disk in running state
+    if [[ "$in_target_section" == true ]] && [[ "$line" =~ Attached\ scsi\ disk\ ([a-z]+).*State:\ running ]]; then
+        device_name="${BASH_REMATCH[1]}"
+        if [[ -n "$device_name" ]]; then
+            TARGET_SESSION_INFO="/dev/$device_name"
+            break  # Take the first running device for this target
+        fi
+    fi
+done <<< "$(iscsiadm -m session -P 3 2>/dev/null)"
+
+# Check if the target device is already mounted
+if [[ -n "$TARGET_SESSION_INFO" && -b "$TARGET_SESSION_INFO" ]]; then
+    is_mounted=false
+    for mounted_device in "${MOUNTED_ISCSI_DEVICES[@]}"; do
+        if [[ "$TARGET_SESSION_INFO" == "$mounted_device" ]]; then
+            echo "Device for target is already mounted: $TARGET_SESSION_INFO"
+            is_mounted=true
+            break
+        fi
+    done
+    
+    # If not mounted, use this device
+    if [[ "$is_mounted" == false ]]; then
+        DEVICE_PATH="$TARGET_SESSION_INFO"
+    fi
+fi
 
 if [[ -z "$DEVICE_PATH" ]]; then
-    echo -e "${RED}Error: Could not detect a running iSCSI device. Please check the connection.${NC}" >&2
-    echo "Available attached devices:"
-    echo "$FINAL_ATTACHED"
+    echo -e "${RED}Error: Could not detect an available iSCSI device for target $TARGET_IQN.${NC}" >&2
+    echo "This could mean:"
+    echo "  - The target connection failed"
+    echo "  - All devices for this target are already mounted"
+    echo "  - The device is not in 'running' state"
+    echo
+    echo "Devices found for target $TARGET_IQN:"
+    echo "$TARGET_SESSION_INFO"
+    echo
+    echo "Currently mounted iSCSI devices: ${MOUNTED_ISCSI_DEVICES[*]:-none}"
     exit 1
 fi
 
@@ -225,16 +347,9 @@ if [[ -n "$EXISTING_PARTITIONS" ]]; then
 fi
 
 if [[ "$SKIP_PARTITIONING" == false ]]; then
-    # Create partition using fdisk
-    (
-    echo o # Create new DOS partition table
-    echo n # Create new partition
-    echo p # Primary partition
-    echo 1 # Partition number
-    echo   # Default first sector
-    echo   # Default last sector (use whole disk)
-    echo w # Write changes and exit
-    ) | fdisk "$DEVICE_PATH"
+    # Create partition using parted (GPT)
+    parted "$DEVICE_PATH" --script mklabel gpt
+    parted "$DEVICE_PATH" --script mkpart primary ext4 0% 100%
 
     # Wait for partition to appear
     sleep 3

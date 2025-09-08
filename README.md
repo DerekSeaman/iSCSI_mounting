@@ -25,7 +25,7 @@ Both scripts are optimized specifically for Debian 13 with open-iscsi (the base 
 - **Automatic iSCSI Service Management** - Detects, enables, and starts the appropriate iSCSI service (iscsid)
 - **CHAP Authentication Support** - Secure connection with username/password authentication
 - **Automatic Device Detection** - Identifies the newly connected iSCSI device without manual specification
-- **Complete Storage Setup** - Partitions, formats (ext4), and mounts the storage automatically
+- **Complete Storage Setup** - Creates GPT partition tables, formats (ext4), and mounts the storage automatically
 - **Existing Storage Protection** - Detects existing partition tables and filesystems, prompts user before destruction, can reuse existing storage
 - **fstab Integration** - Uses traditional fstab approach with systemd-optimized options for reliable boot mounting
 - **Session and Mount Monitoring** - Configures automatic reconnection and mount restoration monitoring via cron (every minute)
@@ -78,8 +78,8 @@ Both scripts are optimized specifically for Debian 13 with open-iscsi (the base 
 3. Install and configure open-iscsi:
 
    ```bash
-   # Install open-iscsi and update package list
-   apt install open-iscsi -y
+   # Install open-iscsi, parted and update package list
+   apt install open-iscsi parted -y
 
    # Load iSCSI kernel modules
    modprobe iscsi_tcp
@@ -177,12 +177,13 @@ To remove all iSCSI configurations and disconnect storage:
 1. **Service Verification** - Checks and starts iscsid service
 2. **iSCSI Connection** - Connects to target with CHAP authentication and configures automatic startup
 3. **Device Detection** - Automatically finds the new storage device
-4. **Storage Preparation** - Intelligently handles partitioning and formatting:
-   - Detects existing partition tables and prompts user before destruction
+4. **Storage Preparation** - Intelligently handles GPT partitioning and formatting:
+   - Detects existing partition tables (both MBR and GPT) and prompts user before destruction
+   - Creates new GPT partition tables for better reliability and modern disk support
    - Can reuse existing partitions if user declines to overwrite
    - Detects existing filesystems and prompts user before formatting
    - Can reuse existing ext2/ext3/ext4 filesystems if user declines to format
-   - Creates new partition and ext4 filesystem only when needed or requested
+   - Creates new GPT partition and ext4 filesystem only when needed or requested
 5. **fstab Configuration** - Adds UUID-based entry to /etc/fstab with systemd-optimized options
 6. **Mount Activation** - Immediately mounts the filesystem and verifies operation
 7. **Monitoring Setup** - Configures automatic session reconnection and mount restoration monitoring via cron
@@ -215,7 +216,7 @@ The mounting script creates several files for persistent configuration:
 
 ### Mount Configuration
 
-- Partition mounted at specified path with UUID-based configuration
+- GPT partition table with single partition mounted at specified path with UUID-based configuration
 - ext4 filesystem optimized for backup storage
 - Automatic mounting on boot via fstab with timeout protection
 - Ready for Proxmox Backup Server datastore configuration
