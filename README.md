@@ -78,7 +78,7 @@ Both scripts are optimized specifically for Debian 13 with open-iscsi (the base 
 3. Install and configure open-iscsi:
 
    ```bash
-   # Install open-iscsi, parted and update package list
+   # Install open-iscsi and parted
    apt install open-iscsi parted -y
 
    # Load iSCSI kernel modules
@@ -179,7 +179,7 @@ To remove all iSCSI configurations and disconnect storage:
 3. **Device Detection** - Automatically finds the new storage device
 4. **Storage Preparation** - Intelligently handles GPT partitioning and formatting:
    - Detects existing partition tables (both MBR and GPT) and prompts user before destruction
-   - Creates new GPT partition tables for better reliability and modern disk support
+   - Creates a new GPT partition table, supporting disks >2TB
    - Can reuse existing partitions if user declines to overwrite
    - Detects existing filesystems and prompts user before formatting
    - Can reuse existing ext2/ext3/ext4 filesystems if user declines to format
