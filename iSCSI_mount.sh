@@ -113,11 +113,11 @@ iscsiadm -m discovery -t sendtargets -p "$PORTAL_IP" || true
 
 # Set CHAP auth method, username, and password
 echo -e "${YELLOW}Configuring CHAP authentication...${NC}"
-iscsiadm -m node --targetname="$TARGET_IQN" \
+iscsiadm -m node --targetname="$TARGET_IQN" --portal="$PORTAL_IP" \
   --op=update --name node.session.auth.authmethod --value=CHAP
-iscsiadm -m node --targetname="$TARGET_IQN" \
+iscsiadm -m node --targetname="$TARGET_IQN" --portal="$PORTAL_IP" \
   --op=update --name node.session.auth.username --value="$CHAP_USER"
-iscsiadm -m node --targetname="$TARGET_IQN" \
+iscsiadm -m node --targetname="$TARGET_IQN" --portal="$PORTAL_IP" \
   --op=update --name node.session.auth.password --value="$CHAP_PASS"
 
 # Configure node for automatic startup
