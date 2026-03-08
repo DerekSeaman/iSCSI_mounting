@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Version 1.4, Sept 8, 2025
+# Version 1.5, March 7, 2026
 # iSCSI LUN mounting script for Proxmox Backup Server (PBS)
 # PBS must be running as a VM or bare metal. LXCs are NOT supported.
 # Derek Seaman
